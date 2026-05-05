@@ -28,7 +28,7 @@ export async function GET(
     .replace(/[^a-z0-9]+/g, "-")
     .slice(0, 50);
 
-  return new NextResponse(buffer, {
+  return new NextResponse(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="${slug}-report.pdf"`,
