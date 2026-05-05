@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  /* GHL design system */
+  --color-sidebar: #13151F;
+  --color-surface: #1B1D27;
+  --color-card: #23263A;
+  --color-edge: #2E3147;
+  --color-brand: #0EA5E9;
+  --color-brand-hover: #0284C7;
+  --color-muted: #8890A4;
+
+  /* Inter throughout */
+  --font-sans: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+body {
+  background: #1B1D27;
+  color: #ffffff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button, [role="button"] {
+  cursor: pointer;
+}
