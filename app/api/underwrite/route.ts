@@ -11,10 +11,68 @@ import type {
   NormalizedComp,
   ARVResult,
   ConditionGrade,
+  ManualComp,
   UnderwriteRequest,
   UnderwriteResponse,
   UnderwriteErrorResponse,
 } from "@/lib/types";
+
+// ── Resolve a user-entered manual comp into a NormalizedComp ──────────────────
+async function resolveManualComp(comp: ManualComp): Promise<NormalizedComp> {
+  const hasSufficientData = comp.salePrice != null && comp.sqft != null && comp.sqft > 0;
+
+  if (hasSufficientData) {
+    const sqft = comp.sqft!;
+    const salePrice = comp.salePrice!;
+    return {
+      address: comp.address,
+      salePrice,
+      saleDate: comp.saleDate ?? "",
+      sqft,
+      pricePerSqft: Math.round(salePrice / sqft),
+      beds: comp.beds ?? 0,
+      baths: comp.baths ?? 0,
+      photos: [],
+      category: comp.compType ?? null,
+    };
+  }
+
+  // Address-only: call searchProperty to fill in property details
+  try {
+    const property = await searchProperty(comp.address);
+    const lastSale = [...(property.priceHistory ?? [])]
+      .filter((h) => h.event?.toLowerCase().includes("sold"))
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
+
+    const sqft = comp.sqft ?? property.sqft ?? 0;
+    const salePrice = comp.salePrice ?? lastSale?.price ?? 0;
+    return {
+      address: comp.address,
+      salePrice,
+      saleDate: comp.saleDate ?? lastSale?.date ?? "",
+      sqft,
+      pricePerSqft: sqft > 0 ? Math.round(salePrice / sqft) : 0,
+      beds: comp.beds ?? property.beds ?? 0,
+      baths: comp.baths ?? property.baths ?? 0,
+      photos: property.photos?.slice(0, 3) ?? [],
+      category: comp.compType ?? null,
+    };
+  } catch {
+    const sqft = comp.sqft ?? 0;
+    const salePrice = comp.salePrice ?? 0;
+    return {
+      address: comp.address,
+      salePrice,
+      saleDate: comp.saleDate ?? "",
+      sqft,
+      pricePerSqft: sqft > 0 ? Math.round(salePrice / sqft) : 0,
+      beds: comp.beds ?? 0,
+      baths: comp.baths ?? 0,
+      photos: [],
+      category: comp.compType ?? null,
+    };
+  }
+}
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -59,14 +117,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const notes            = body.notes?.trim() || undefined;
-  const condition        = body.condition;
-  const marketMultiplier = typeof body.marketMultiplier === "number" ? body.marketMultiplier : 1.0;
-  const extraItems       = Array.isArray(body.extraItems) ? body.extraItems : [];
-  const rerunDealId      = typeof body.dealId === "string" ? body.dealId : null;
-  const propertyPhotos   = Array.isArray(body.propertyPhotos) && body.propertyPhotos.length > 0
+  const notes              = body.notes?.trim() || undefined;
+  const condition          = body.condition;
+  const marketMultiplier   = typeof body.marketMultiplier === "number" ? body.marketMultiplier : 1.0;
+  const extraItems         = Array.isArray(body.extraItems) ? body.extraItems : [];
+  const investorProfitPct  = typeof body.investorProfitPct === "number"
+    ? Math.max(0.01, Math.min(0.99, body.investorProfitPct))
+    : 0.15;
+  const assignmentFee      = typeof body.assignmentFee === "number"
+    ? Math.max(0, body.assignmentFee)
+    : 22_500;
+  const rerunDealId        = typeof body.dealId === "string" ? body.dealId : null;
+  const propertyPhotos     = Array.isArray(body.propertyPhotos) && body.propertyPhotos.length > 0
     ? body.propertyPhotos
     : undefined;
+  const baseComps          = rerunDealId && Array.isArray(body.baseComps) ? body.baseComps as NormalizedComp[] : null;
+  const manualCompsInput   = Array.isArray(body.manualComps) ? body.manualComps as ManualComp[] : [];
 
   // Track deal ID so the catch block can mark it failed
   let dealId: string | null = null;
@@ -97,37 +163,85 @@ export async function POST(request: NextRequest) {
 
       dealId = rerunDealId;
     } else {
-      const { data: deal, error: createError } = await supabase
+      // Reuse an existing failed row for the same address instead of creating a new one
+      const { data: existingFailed } = await supabase
         .from("deals")
-        .insert({ user_id: user.id, address, status: "pending" })
         .select("id")
+        .eq("user_id", user.id)
+        .eq("address", address)
+        .eq("status", "failed")
+        .limit(1)
         .single();
 
-      if (createError || !deal) {
-        throw new Error(`Failed to create deal record: ${createError?.message}`);
+      if (existingFailed) {
+        await supabase.from("deals").update({
+          status: "pending",
+          recommendation: null,
+          arv_low: null,
+          arv_high: null,
+          max_offer: null,
+          error_message: null,
+        }).eq("id", existingFailed.id);
+        dealId = existingFailed.id as string;
+      } else {
+        const { data: deal, error: createError } = await supabase
+          .from("deals")
+          .insert({ user_id: user.id, address, status: "pending" })
+          .select("id")
+          .single();
+
+        if (createError || !deal) {
+          throw new Error(`Failed to create deal record: ${createError?.message}`);
+        }
+        dealId = deal.id as string;
       }
-      dealId = deal.id as string;
     }
 
     // ── STEP 2: Axesso — searchProperty (subject property details) ──────────
     const property = await searchProperty(address);
+    if (!property.zpid || !property.address) {
+      throw new Error("Property not found — please enter a valid property address.");
+    }
     if (notes) property.notes = notes;
     console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     console.log("[STEP 2] PROPERTY", JSON.stringify(property, null, 2));
 
-    // ── STEP 3: Axesso — searchSimilarSolds (sold comps) ────────────────────
-    const soldComps = await searchSimilarSolds(String(property.zpid));
-    console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(`[STEP 3] SOLD COMPS (${soldComps.length})`, JSON.stringify(soldComps, null, 2));
+    // ── STEP 3: Comps — fetch from Axesso (fresh deal) or reuse stored (re-run) ─
+    let normalizedComps: NormalizedComp[];
+    let compsFetchedFresh = false;
 
-    // ── STEP 5: Normalize comps ──────────────────────────────────────────────
-    const normalizedComps: NormalizedComp[] = soldComps.map((comp) => ({
-      ...comp,
-      category: null,
-    }));
+    if (baseComps !== null) {
+      // Re-run: skip Axesso — use the stored comps the user chose to keep.
+      // Reset categories to null so Claude re-evaluates them.
+      normalizedComps = baseComps.map((c) => ({ ...c, category: null as NormalizedComp["category"] }));
+      console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[STEP 3] RE-RUN — skipping searchSimilarSolds, using ${normalizedComps.length} stored base comps`);
+    } else {
+      const soldComps = await searchSimilarSolds(String(property.zpid));
+      normalizedComps = soldComps.map((comp) => ({ ...comp, category: null as NormalizedComp["category"] }));
+      compsFetchedFresh = true;
+      console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[STEP 3] FRESH — fetched ${soldComps.length} comps from Axesso`, JSON.stringify(soldComps, null, 2));
+    }
+
+    // ── STEP 4: Resolve manual comps ─────────────────────────────────────────
+    const resolvedManualComps: NormalizedComp[] = manualCompsInput.length > 0
+      ? await Promise.all(manualCompsInput.map(resolveManualComp))
+      : [];
+    if (resolvedManualComps.length > 0) {
+      console.log(`[STEP 4] MANUAL COMPS resolved (${resolvedManualComps.length}):`, JSON.stringify(resolvedManualComps.map(c => ({ address: c.address, category: c.category, salePrice: c.salePrice })), null, 2));
+    }
+
+    // ── STEP 5: Merge + split for Claude ─────────────────────────────────────
+    const allComps = [...normalizedComps, ...resolvedManualComps];
+    // Comps where user pre-assigned a category bypass Claude entirely
+    const lockedComps  = allComps.filter((c) => c.category !== null);
+    const compsForClaude = allComps.filter((c) => c.category === null);
+
     const workflowFlags: string[] = [];
-    if (soldComps.length === 0) workflowFlags.push("no_comps_available");
+    if (allComps.length === 0) workflowFlags.push("no_comps_available");
     console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    console.log(`[STEP 5] allComps: ${allComps.length} | forClaude: ${compsForClaude.length} | locked: ${lockedComps.length}`);
     console.log("[STEP 5] USER INPUTS → condition:", condition, "| multiplier:", marketMultiplier, "| extraItems:", JSON.stringify(extraItems));
 
     // ── STEP 6: Claude Call 1 — Property condition assessment (photos + notes) ─
@@ -143,18 +257,26 @@ export async function POST(request: NextRequest) {
     console.log("[STEP 7] REPAIR COSTS", JSON.stringify(repairCosts, null, 2));
 
     // ── STEP 8: Claude Call 2 — Comp validation and categorization ───────────
-    // Skipped when no comps exist
+    // Only comps with category=null go to Claude. Locked comps (user-specified
+    // type) are merged back in after without Claude touching their category.
     let validatedComps: NormalizedComp[] = [];
     let compValidation: { validatedComps: NormalizedComp[]; rejectedComps: { compIndex: number; reason: string }[]; analystNotes: string };
 
-    if (normalizedComps.length > 0) {
-      compValidation = await validateAndCategorizeComps(normalizedComps, property, condition);
-      validatedComps = compValidation.validatedComps;
+    if (compsForClaude.length > 0) {
+      compValidation = await validateAndCategorizeComps(compsForClaude, property, condition);
+      validatedComps = [...compValidation.validatedComps, ...lockedComps];
       console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log("[STEP 8] CLAUDE CALL 2 — COMP CATEGORIZATION");
       console.log("  Analyst notes:", compValidation.analystNotes);
       console.log("  Rejected:", JSON.stringify(compValidation.rejectedComps));
-      console.log("  Validated comps:", JSON.stringify(validatedComps.map(c => ({ address: c.address, category: c.category, pricePerSqft: c.pricePerSqft })), null, 2));
+      console.log("  Claude-validated:", compValidation.validatedComps.length, "| locked:", lockedComps.length);
+      console.log("  All validated comps:", JSON.stringify(validatedComps.map(c => ({ address: c.address, category: c.category, pricePerSqft: c.pricePerSqft })), null, 2));
+    } else if (lockedComps.length > 0) {
+      // All comps were user-specified — skip Claude Call 2 entirely
+      validatedComps = lockedComps;
+      compValidation = { validatedComps: lockedComps, rejectedComps: [], analystNotes: "All comps were user-specified with locked categories." };
+      console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log("[STEP 8] SKIPPED — all comps are user-locked");
     } else {
       compValidation = { validatedComps: [], rejectedComps: [], analystNotes: "No comparable sales available for this property." };
       console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -179,7 +301,7 @@ export async function POST(request: NextRequest) {
         compsUsed: 0,
         methodology: "simple-average",
       };
-      workflowFlags.push(soldComps.length === 0 ? "no_comps_arv_from_zestimate" : "no_arv_comps_arv_from_zestimate");
+      workflowFlags.push(allComps.length === 0 ? "no_comps_arv_from_zestimate" : "no_arv_comps_arv_from_zestimate");
       console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log("[STEP 9] NO ARV COMPS — using Zestimate as ARV:", zestimate);
     } else {
@@ -190,7 +312,7 @@ export async function POST(request: NextRequest) {
       console.log("[STEP 9] NO ARV COMPS AND NO ZESTIMATE — ARV set to 0, flagged as unavailable");
     }
 
-    const maxOfferResult = calcMaxOffer(arvResult.arv, repairCosts);
+    const maxOfferResult = calcMaxOffer(arvResult.arv, repairCosts, investorProfitPct, assignmentFee);
     console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     console.log("[STEP 9] ARV RESULT", JSON.stringify(arvResult, null, 2));
     console.log("[STEP 9] MAX OFFER RESULT", JSON.stringify(maxOfferResult, null, 2));

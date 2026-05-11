@@ -33,7 +33,7 @@ export function DownloadPDFButton({ dealId }: { dealId: string }) {
     <button
       onClick={handleDownload}
       disabled={loading}
-      className="flex items-center gap-1.5 bg-card border border-edge hover:border-brand text-muted hover:text-white text-[13px] font-medium px-3 py-2 rounded-lg transition-colors disabled:opacity-50 print:hidden"
+      className="flex items-center gap-1.5 bg-brand hover:bg-brand-hover text-white text-[13px] font-semibold px-3 py-2 rounded-lg transition-colors disabled:opacity-50 print:hidden shadow-sm shadow-brand/20"
     >
       {loading
         ? <><Loader2 size={14} className="animate-spin" />Generating…</>

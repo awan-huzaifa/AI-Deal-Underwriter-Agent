@@ -185,9 +185,11 @@ export interface MaxOfferResult {
   netSalesPrice: number; // ARV × 0.92
   closingCosts: number; // ARV × 0.02
   realtorFees: number; // ARV × 0.06
-  investorProfit: number; // 30k | 40k | 50k tiered by ARV
-  maxOfferLow: number; // netSalesPrice − repairs.high − investorProfit
-  maxOfferHigh: number; // netSalesPrice − repairs.low  − investorProfit
+  investorProfitPct: number; // e.g. 0.15 = 15% of netSalesPrice
+  investorProfit: number; // netSalesPrice × investorProfitPct
+  assignmentFee: number; // minimum assignment fee, default 22500
+  maxOfferLow: number; // netSalesPrice − repairs.high − investorProfit − assignmentFee
+  maxOfferHigh: number; // netSalesPrice − repairs.low  − investorProfit − assignmentFee
 }
 
 // ─── Claude Call 3: Final underwriting report ─────────────────────────────────
@@ -237,14 +239,31 @@ export interface UploadedPhoto {
   mediaType: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 }
 
+export interface ManualComp {
+  address: string;
+  compType?: CompCategory;    // if set, category is pre-assigned and Claude skips it
+  salePrice?: number;
+  saleDate?: string;          // ISO date
+  beds?: number;
+  baths?: number;
+  sqft?: number;
+  lotSizeSqft?: number;
+  yearBuilt?: number;
+  constructionType?: string;
+}
+
 export interface UnderwriteRequest {
   address: string;
   notes?: string;
   condition: ConditionGrade;
   marketMultiplier: number;
   extraItems: ExtraItem[];
-  dealId?: string; // present on re-run — replaces existing deal in place
-  propertyPhotos?: UploadedPhoto[]; // user-uploaded photos; if present, replaces Axesso photos for Claude Call 1
+  investorProfitPct?: number;   // 0–1, defaults to 0.15
+  assignmentFee?: number;       // defaults to 22500
+  dealId?: string;              // present on re-run
+  propertyPhotos?: UploadedPhoto[];
+  baseComps?: NormalizedComp[]; // re-run: stored comps minus user-excluded ones
+  manualComps?: ManualComp[];   // re-run: comps entered manually by user
 }
 
 export interface UnderwriteResponse {

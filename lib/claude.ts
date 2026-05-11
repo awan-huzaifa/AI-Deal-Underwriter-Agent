@@ -12,7 +12,7 @@ import type {
   UploadedPhoto,
 } from "@/lib/types";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 5 });
 
 const MODEL: Anthropic.Model = "claude-opus-4-7";
 

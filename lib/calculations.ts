@@ -23,12 +23,6 @@ const REPAIR_PER_SQFT: Record<ConditionGrade, { low: number; high: number }> = {
   poor:      { low: 55, high: 65 },
 };
 
-function investorProfitForARV(arv: number): number {
-  if (arv >= 500_000) return 50_000;
-  if (arv >= 350_000) return 40_000;
-  return 30_000;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 7 — Repair costs from user-selected condition grade
 // ─────────────────────────────────────────────────────────────────────────────
@@ -182,31 +176,34 @@ export function calcARV(
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 9b — Full offer stack from ARV + repair range
 // ─────────────────────────────────────────────────────────────────────────────
-export function calcMaxOffer(arv: number, repairs: RepairCosts): MaxOfferResult {
+export function calcMaxOffer(arv: number, repairs: RepairCosts, investorProfitPct = 0.15, assignmentFee = 22_500): MaxOfferResult {
   console.log("\n" + "─".repeat(50));
   console.log("CALC — calcMaxOffer");
   console.log("─".repeat(50));
-  console.log("[calcMaxOffer] INPUTS → arv: $" + arv.toLocaleString() + " | repairs.low: $" + repairs.low.toLocaleString() + " | repairs.high: $" + repairs.high.toLocaleString());
+  console.log("[calcMaxOffer] INPUTS → arv: $" + arv.toLocaleString() + " | repairs.low: $" + repairs.low.toLocaleString() + " | repairs.high: $" + repairs.high.toLocaleString() + " | investorProfitPct: " + (investorProfitPct * 100).toFixed(1) + "% | assignmentFee: $" + assignmentFee.toLocaleString());
 
   const netSalesPrice  = arv * NET_SALES_FACTOR;
   const closingCosts   = arv * CLOSING_COST_FACTOR;
   const realtorFees    = arv * REALTOR_FEE_FACTOR;
-  const investorProfit = investorProfitForARV(arv);
+  const investorProfit = netSalesPrice * investorProfitPct;
 
   console.log("[calcMaxOffer] netSalesPrice:", arv, "×", NET_SALES_FACTOR, "=", netSalesPrice.toFixed(2));
   console.log("[calcMaxOffer] closingCosts:", arv, "×", CLOSING_COST_FACTOR, "=", closingCosts.toFixed(2));
   console.log("[calcMaxOffer] realtorFees:", arv, "×", REALTOR_FEE_FACTOR, "=", realtorFees.toFixed(2));
-  console.log("[calcMaxOffer] investorProfit (tiered by ARV):", investorProfit);
-  console.log("[calcMaxOffer] maxOfferLow:", netSalesPrice.toFixed(2), "-", repairs.high, "-", investorProfit, "=", (netSalesPrice - repairs.high - investorProfit).toFixed(2));
-  console.log("[calcMaxOffer] maxOfferHigh:", netSalesPrice.toFixed(2), "-", repairs.low, "-", investorProfit, "=", (netSalesPrice - repairs.low - investorProfit).toFixed(2));
+  console.log("[calcMaxOffer] investorProfit:", netSalesPrice.toFixed(2), "×", investorProfitPct, "=", investorProfit.toFixed(2));
+  console.log("[calcMaxOffer] assignmentFee: $" + assignmentFee.toLocaleString());
+  console.log("[calcMaxOffer] maxOfferLow:", netSalesPrice.toFixed(2), "-", repairs.high, "-", investorProfit.toFixed(2), "-", assignmentFee, "=", (netSalesPrice - repairs.high - investorProfit - assignmentFee).toFixed(2));
+  console.log("[calcMaxOffer] maxOfferHigh:", netSalesPrice.toFixed(2), "-", repairs.low, "-", investorProfit.toFixed(2), "-", assignmentFee, "=", (netSalesPrice - repairs.low - investorProfit - assignmentFee).toFixed(2));
 
   const result: MaxOfferResult = {
     netSalesPrice,
     closingCosts,
     realtorFees,
+    investorProfitPct,
     investorProfit,
-    maxOfferLow:  netSalesPrice - repairs.high - investorProfit,
-    maxOfferHigh: netSalesPrice - repairs.low  - investorProfit,
+    assignmentFee,
+    maxOfferLow:  netSalesPrice - repairs.high - investorProfit - assignmentFee,
+    maxOfferHigh: netSalesPrice - repairs.low  - investorProfit - assignmentFee,
   };
 
   console.log("[calcMaxOffer] OUTPUT:", JSON.stringify(result, null, 2));
