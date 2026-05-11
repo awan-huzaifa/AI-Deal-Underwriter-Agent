@@ -22,11 +22,10 @@ const CONDITION_OPTIONS: { value: ConditionGrade; label: string }[] = [
 ];
 
 const COMP_TYPE_OPTIONS: { value: CompCategory | ""; label: string }[] = [
-  { value: "",          label: "— Let Claude decide —" },
-  { value: "arv",       label: "ARV Comp" },
-  { value: "turnkey",   label: "Turnkey" },
-  { value: "as_is",     label: "As-Is" },
-  { value: "cash_sale", label: "Cash Sale" },
+  { value: "",        label: "— Let AI decide —" },
+  { value: "arv",     label: "ARV Comp" },
+  { value: "turnkey", label: "Turnkey" },
+  { value: "as_is",   label: "As-Is" },
 ];
 
 const CONSTRUCTION_OPTIONS = [
@@ -97,12 +96,11 @@ function fmt(n: number) {
 function catBadge(cat: string | null) {
   if (!cat) return null;
   const map: Record<string, string> = {
-    arv:       "bg-brand/10 text-brand border-brand/20",
-    turnkey:   "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-    as_is:     "bg-amber-500/10 text-amber-400 border-amber-500/20",
-    cash_sale: "bg-violet-500/10 text-violet-400 border-violet-500/20",
+    arv:     "bg-brand/10 text-brand border-brand/20",
+    turnkey: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    as_is:   "bg-amber-500/10 text-amber-400 border-amber-500/20",
   };
-  const labels: Record<string, string> = { arv: "ARV", turnkey: "Turnkey", as_is: "As-Is", cash_sale: "Cash" };
+  const labels: Record<string, string> = { arv: "ARV", turnkey: "Turnkey", as_is: "As-Is" };
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold border ${map[cat] ?? ""}`}>
       {labels[cat] ?? cat}

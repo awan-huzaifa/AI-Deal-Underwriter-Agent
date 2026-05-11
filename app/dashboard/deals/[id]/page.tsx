@@ -52,13 +52,12 @@ function ConditionBadge({ grade }: { grade: string }) {
 function CategoryBadge({ cat }: { cat: string | null }) {
   if (!cat) return <span className="text-muted text-[11px]">—</span>;
   const map: Record<string, string> = {
-    arv:       "bg-brand/10 text-brand border-brand/20",
-    turnkey:   "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-    as_is:     "bg-amber-500/10 text-amber-400 border-amber-500/20",
-    cash_sale: "bg-violet-500/10 text-violet-400 border-violet-500/20",
+    arv:     "bg-brand/10 text-brand border-brand/20",
+    turnkey: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+    as_is:   "bg-amber-500/10 text-amber-400 border-amber-500/20",
   };
   const labels: Record<string, string> = {
-    arv: "ARV", turnkey: "Turnkey", as_is: "As-Is", cash_sale: "Cash Sale",
+    arv: "ARV", turnkey: "Turnkey", as_is: "As-Is",
   };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border ${map[cat] ?? ""}`}>

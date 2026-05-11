@@ -141,7 +141,7 @@ export async function validateAndCategorizeComps(
   const system = `You are a senior real estate appraiser. Categorize each comparable sale provided.
 Return ONLY valid JSON — no markdown, no explanation — with this exact schema:
 {
-  "validatedComps": [{ "compIndex": <integer>, "category": "arv" | "turnkey" | "as_is" | "cash_sale" }],
+  "validatedComps": [{ "compIndex": <integer>, "category": "arv" | "turnkey" | "as_is" }],
   "rejectedComps": [{ "compIndex": <integer>, "reason": "<string>" }],
   "analystNotes": "<string>"
 }
@@ -152,7 +152,6 @@ Category definitions:
 - arv: renovated/updated sale — good comparable to post-repair ARV
 - turnkey: move-in ready but not fully renovated
 - as_is: sold in distressed/unrepaired condition
-- cash_sale: likely investor/cash transaction, may not reflect retail value
 
 Reject comps that are not single-family, are condos/townhomes, or are clearly non-arms-length.`;
 
@@ -283,7 +282,6 @@ If the workflow flags include "arv_unavailable": no comparable sales or Zestimat
   const arvComps = input.validatedComps.filter((c) => c.category === "arv");
   const turnkeyComps = input.validatedComps.filter((c) => c.category === "turnkey");
   const asIsComps = input.validatedComps.filter((c) => c.category === "as_is");
-  const cashComps = input.validatedComps.filter((c) => c.category === "cash_sale");
 
   const bundle = {
     property: input.property,
@@ -296,7 +294,6 @@ If the workflow flags include "arv_unavailable": no comparable sales or Zestimat
     arvComps,
     turnkeyComps,
     asIsComps,
-    cashComps,
     flags: input.flags,
     ...(input.property.notes ? { agentNotes: input.property.notes } : {}),
   };
@@ -306,7 +303,7 @@ If the workflow flags include "arv_unavailable": no comparable sales or Zestimat
   console.log("═".repeat(60));
   console.log("[CALL 3] SYSTEM PROMPT:\n", system);
   console.log("[CALL 3] INPUT BUNDLE:\n", JSON.stringify(bundle, null, 2));
-  console.log("[CALL 3] COMP BREAKDOWN → arv:", arvComps.length, "| turnkey:", turnkeyComps.length, "| as_is:", asIsComps.length, "| cash_sale:", cashComps.length);
+  console.log("[CALL 3] COMP BREAKDOWN → arv:", arvComps.length, "| turnkey:", turnkeyComps.length, "| as_is:", asIsComps.length);
   console.log("[CALL 3] MODEL:", MODEL, "| max_tokens: 4096");
 
   const response = await anthropic.messages.create({

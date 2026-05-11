@@ -109,7 +109,7 @@ export interface ActiveListing {
 // ─── Normalized / filtered comps ──────────────────────────────────────────────
 
 // Assigned by Claude in Step 8. Only 'arv' comps are used in ARV calculation.
-export type CompCategory = "arv" | "turnkey" | "as_is" | "cash_sale";
+export type CompCategory = "arv" | "turnkey" | "as_is";
 
 export interface NormalizedComp {
   address: string;
@@ -161,7 +161,7 @@ export interface RejectedComp {
 }
 
 export interface CompValidation {
-  // NormalizedComps with category populated. Turnkey/as_is/cash_sale shown as
+  // NormalizedComps with category populated. Turnkey/as_is shown as
   // reference on the report; only arv comps feed calcARV.
   validatedComps: NormalizedComp[];
   rejectedComps: RejectedComp[];
