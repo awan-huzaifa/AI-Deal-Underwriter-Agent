@@ -153,7 +153,7 @@ Category definitions:
 - turnkey: move-in ready but not fully renovated
 - as_is: sold in distressed/unrepaired condition
 
-Reject comps that are not single-family, are condos/townhomes, or are clearly non-arms-length.`;
+Reject ONLY if: (1) the comp's property type does not match the subject property type, or (2) the sale price is unrealistically far from the subject's expected value range — e.g. a $50K sale next to $300K comps, or a $1.2M sale in a $200K neighborhood. Do not reject based on distance, age of sale, or foreclosure/REO status.`;
 
   const subjectBlock: Anthropic.TextBlockParam = {
     type: "text",

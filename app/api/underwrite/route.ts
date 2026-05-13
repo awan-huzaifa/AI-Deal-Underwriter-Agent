@@ -133,6 +133,9 @@ export async function POST(request: NextRequest) {
     : undefined;
   const baseComps          = rerunDealId && Array.isArray(body.baseComps) ? body.baseComps as NormalizedComp[] : null;
   const manualCompsInput   = Array.isArray(body.manualComps) ? body.manualComps as ManualComp[] : [];
+  const arvOverride        = body.arvOverride?.mode && typeof body.arvOverride.value === "number" && body.arvOverride.value > 0
+    ? body.arvOverride
+    : null;
 
   // Track deal ID so the catch block can mark it failed
   let dealId: string | null = null;
@@ -212,8 +215,8 @@ export async function POST(request: NextRequest) {
 
     if (baseComps !== null) {
       // Re-run: skip Axesso — use the stored comps the user chose to keep.
-      // Reset categories to null so Claude re-evaluates them.
-      normalizedComps = baseComps.map((c) => ({ ...c, category: null as NormalizedComp["category"] }));
+      // Preserve user-set categories (locked); null means "let Claude decide".
+      normalizedComps = baseComps.map((c) => ({ ...c }));
       console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       console.log(`[STEP 3] RE-RUN — skipping searchSimilarSolds, using ${normalizedComps.length} stored base comps`);
     } else {
@@ -288,7 +291,25 @@ export async function POST(request: NextRequest) {
     const hasArvComps = validatedComps.some((c) => c.category === "arv");
 
     let arvResult: ARVResult;
-    if (hasArvComps) {
+    if (arvOverride) {
+      const arv = arvOverride.mode === "per_sqft"
+        ? arvOverride.value * property.sqft + arvAdjustment
+        : arvOverride.value;
+      const avgPricePerSqft = arvOverride.mode === "per_sqft"
+        ? arvOverride.value
+        : (property.sqft > 0 ? Math.round(arv / property.sqft) : 0);
+      arvResult = {
+        arv,
+        arvLow:  arv * 0.97,
+        arvHigh: arv * 1.03,
+        avgPricePerSqft,
+        compsUsed: 0,
+        methodology: "simple-average",
+      };
+      workflowFlags.push(arvOverride.mode === "per_sqft" ? "arv_manual_per_sqft_override" : "arv_manual_fixed_override");
+      console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log(`[STEP 9] MANUAL ARV OVERRIDE — mode: ${arvOverride.mode} | value: ${arvOverride.value} | arv: ${arv}`);
+    } else if (hasArvComps) {
       arvResult = calcARV(validatedComps, property.sqft, arvAdjustment);
     } else if (property.zestimate) {
       const zestimate = property.zestimate;

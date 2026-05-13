@@ -116,6 +116,7 @@ export interface NormalizedComp {
   salePrice: number;
   saleDate: string; // ISO date
   sqft: number;
+  lotSizeSqft?: number;
   pricePerSqft: number;
   beds: number;
   baths: number;
@@ -264,6 +265,7 @@ export interface UnderwriteRequest {
   propertyPhotos?: UploadedPhoto[];
   baseComps?: NormalizedComp[]; // re-run: stored comps minus user-excluded ones
   manualComps?: ManualComp[];   // re-run: comps entered manually by user
+  arvOverride?: { mode: "per_sqft" | "fixed"; value: number }; // re-run: bypass comp-based ARV
 }
 
 export interface UnderwriteResponse {

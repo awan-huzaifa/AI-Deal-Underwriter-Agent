@@ -15,10 +15,10 @@ type State =
   | { phase: "error"; message: string };
 
 const CONDITION_OPTIONS: { value: ConditionGrade; label: string }[] = [
-  { value: "excellent", label: "Excellent — Fully Renovated / Turnkey" },
-  { value: "good",      label: "Good — Minor Cosmetic Updates Needed" },
-  { value: "fair",      label: "Fair — Moderate Repairs Needed" },
-  { value: "poor",      label: "Poor — Major Repairs Needed" },
+  { value: "excellent", label: "Excellent (Fully Renovated / Turnkey) — $0–$15/sqft" },
+  { value: "good",      label: "Good (Minor Cosmetic Updates Needed) — $25–$35/sqft" },
+  { value: "fair",      label: "Fair (Moderate Repairs Needed) — $40–$50/sqft" },
+  { value: "poor",      label: "Poor (Major Repairs Needed) — $55–$65/sqft" },
 ];
 
 const DEFAULT_EXTRA_ITEMS: ExtraItem[] = [
@@ -28,6 +28,8 @@ const DEFAULT_EXTRA_ITEMS: ExtraItem[] = [
   { label: "Entire Electrical Replacement", cost:  7_000, checked: false },
   { label: "Light Foundation",              cost:  7_500, checked: false },
   { label: "Heavy Foundation",              cost: 15_000, checked: false },
+  { label: "Septic Tank Replacement",       cost: 15_000, checked: false },
+  { label: "Well Replacement",              cost: 10_000, checked: false },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -76,7 +78,7 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
   const [notes, setNotes] = useState("");
   const [condition, setCondition] = useState<ConditionGrade>("fair");
   const [marketMultiplier, setMarketMultiplier] = useState(1.0);
-  const [investorProfitPct, setInvestorProfitPct] = useState(15);
+  const [investorProfitPct, setInvestorProfitPct] = useState(20);
   const [assignmentFee, setAssignmentFee] = useState(22_500);
   const [extraItems, setExtraItems] = useState<ExtraItem[]>(DEFAULT_EXTRA_ITEMS);
   const [propertyPhotos, setPropertyPhotos] = useState<UploadedPhoto[]>([]);
@@ -159,7 +161,7 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
+        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-4xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
 
           {/* Header */}
           <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
@@ -238,24 +240,15 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
                     </div>
 
                     {/* Investor Profit */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Investor Profit</label>
-                        <span className="text-brand text-[13px] font-semibold tabular-nums">{investorProfitPct}%</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input type="range" min={1} max={40} step={1} value={investorProfitPct}
-                          onChange={(e) => setInvestorProfitPct(parseInt(e.target.value, 10))}
-                          disabled={disabled} className="flex-1 accent-brand disabled:opacity-50"
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Investor Profit</label>
+                      <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden focus-within:border-brand transition-colors">
+                        <input type="number" min={1} max={40} value={investorProfitPct}
+                          onChange={(e) => setInvestorProfitPct(Math.max(1, Math.min(40, parseInt(e.target.value, 10) || 20)))}
+                          disabled={disabled}
+                          className="flex-1 bg-transparent px-3.5 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums"
                         />
-                        <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden">
-                          <input type="number" min={1} max={40} value={investorProfitPct}
-                            onChange={(e) => setInvestorProfitPct(Math.max(1, Math.min(40, parseInt(e.target.value, 10) || 15)))}
-                            disabled={disabled}
-                            className="w-12 bg-transparent px-2 py-1.5 text-white text-[13px] text-right focus:outline-none disabled:opacity-50 tabular-nums"
-                          />
-                          <span className="text-muted text-[12px] pr-2">%</span>
-                        </div>
+                        <span className="text-muted text-[13px] pr-3.5">%</span>
                       </div>
                       <p className="text-muted text-[10px]">% of net sales price (ARV × 0.92)</p>
                     </div>
@@ -286,23 +279,35 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
                       <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Additional Repair Items</label>
                       <div className="space-y-1.5">
                         {extraItems.map((item, i) => (
-                          <div key={item.label} className="flex items-center gap-2.5">
-                            <input type="checkbox" id={`item-${i}`} checked={item.checked}
-                              onChange={() => toggleItem(i)} disabled={disabled}
-                              className="w-4 h-4 accent-brand shrink-0 disabled:opacity-50"
-                            />
-                            <label htmlFor={`item-${i}`} className={`flex-1 text-[13px] cursor-pointer select-none ${item.checked ? "text-white" : "text-muted"}`}>
-                              {item.label}
-                            </label>
-                            <div className="flex items-center">
-                              <span className="text-muted text-[12px] mr-1">$</span>
-                              <input type="text" value={item.cost.toLocaleString()}
-                                onChange={(e) => updateItemCost(i, e.target.value)}
-                                disabled={disabled || !item.checked}
-                                className="w-20 bg-surface border border-edge rounded px-2 py-1 text-white text-[12px] text-right focus:outline-none focus:border-brand transition-colors disabled:opacity-40 tabular-nums"
+                          <>
+                            {i === 4 && (
+                              <div key="foundation-separator" className="pt-1">
+                                <div className="border-t border-edge" />
+                                {condition === "poor" && (
+                                  <p className="mt-2 text-[11px] text-amber-400/80 leading-snug">
+                                    Poor condition already includes full gut costs above. Only check foundation if applicable — it is always additive regardless of condition.
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                            <div key={item.label} className="flex items-center gap-2.5">
+                              <input type="checkbox" id={`item-${i}`} checked={item.checked}
+                                onChange={() => toggleItem(i)} disabled={disabled}
+                                className="w-4 h-4 accent-brand shrink-0 disabled:opacity-50"
                               />
+                              <label htmlFor={`item-${i}`} className={`flex-1 text-[13px] cursor-pointer select-none ${item.checked ? "text-white" : "text-muted"}`}>
+                                {item.label}
+                              </label>
+                              <div className="flex items-center">
+                                <span className="text-muted text-[12px] mr-1">$</span>
+                                <input type="text" value={item.cost.toLocaleString()}
+                                  onChange={(e) => updateItemCost(i, e.target.value)}
+                                  disabled={disabled || !item.checked}
+                                  className="w-20 bg-surface border border-edge rounded px-2 py-1 text-white text-[12px] text-right focus:outline-none focus:border-brand transition-colors disabled:opacity-40 tabular-nums"
+                                />
+                              </div>
                             </div>
-                          </div>
+                          </>
                         ))}
                       </div>
                     </div>

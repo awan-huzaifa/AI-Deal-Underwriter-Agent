@@ -8,6 +8,13 @@ const defaultHeaders = {
   "Cache-Control": "no-cache",
 };
 
+// Axesso returns lot size in acres for some properties and sqft for others.
+// Values < 100 are treated as acres and converted; >= 100 are already sqft.
+function normalizeLotSize(value: number | null | undefined): number | undefined {
+  if (!value || value <= 0) return undefined;
+  return value < 100 ? Math.round(value * 43_560) : Math.round(value);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // STEP 2 helper
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,7 +50,7 @@ export async function searchProperty(address: string): Promise<PropertyDetails> 
     beds: Number(data.adTargets?.bd),
     baths: Number(data.adTargets?.ba),
     sqft: Number(data.adTargets?.sqft),
-    lotSizeSqft: data.resoFacts?.lotSize,
+    lotSizeSqft: normalizeLotSize(data.resoFacts?.lotSize),
     yearBuilt: data.resoFacts?.yearBuilt,
     propertyType: data.homeType || data.adTargets?.proptp,
     constructionMaterials: data.resoFacts?.constructionMaterials ?? [],
@@ -151,7 +158,7 @@ export async function searchSimilarSolds(zpid: string): Promise<SoldComp[]> {
         beds: p.bedrooms ?? 0,
         baths: p.bathrooms ?? 0,
         sqft,
-        lotSizeSqft: p.lotAreaValue ?? 0,
+        lotSizeSqft: normalizeLotSize(p.lotAreaValue),
         pricePerSqft: sqft > 0 ? Math.round(salePrice / sqft) : 0,
         distanceMiles: p.distance ?? 0,
         propertyType: p.homeType ?? "",

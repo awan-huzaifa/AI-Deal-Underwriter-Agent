@@ -150,6 +150,7 @@ export default async function DealDetailPage({ params }: { params: Promise<{ id:
                 initialCheckedItems={repairs.checkedExtraItems ?? []}
                 initialInvestorProfitPct={investorProfitPctVal}
                 initialAssignmentFee={calc.maxOfferResult?.assignmentFee ?? 22_500}
+                initialNotes={prop.notes ?? ""}
                 existingComps={comps}
               />
             )}

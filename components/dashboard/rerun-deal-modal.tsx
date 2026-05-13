@@ -15,10 +15,10 @@ type State =
   | { phase: "error"; message: string };
 
 const CONDITION_OPTIONS: { value: ConditionGrade; label: string }[] = [
-  { value: "excellent", label: "Excellent — Fully Renovated / Turnkey" },
-  { value: "good",      label: "Good — Minor Cosmetic Updates Needed" },
-  { value: "fair",      label: "Fair — Moderate Repairs Needed" },
-  { value: "poor",      label: "Poor — Major Repairs Needed" },
+  { value: "excellent", label: "Excellent (Fully Renovated / Turnkey) — $0–$15/sqft" },
+  { value: "good",      label: "Good (Minor Cosmetic Updates Needed) — $25–$35/sqft" },
+  { value: "fair",      label: "Fair (Moderate Repairs Needed) — $40–$50/sqft" },
+  { value: "poor",      label: "Poor (Major Repairs Needed) — $55–$65/sqft" },
 ];
 
 const COMP_TYPE_OPTIONS: { value: CompCategory | ""; label: string }[] = [
@@ -39,6 +39,8 @@ const DEFAULT_EXTRA_ITEMS: ExtraItem[] = [
   { label: "Entire Electrical Replacement", cost:  7_000, checked: false },
   { label: "Light Foundation",              cost:  7_500, checked: false },
   { label: "Heavy Foundation",              cost: 15_000, checked: false },
+  { label: "Septic Tank Replacement",       cost: 15_000, checked: false },
+  { label: "Well Replacement",              cost: 10_000, checked: false },
 ];
 
 const MAX_PHOTOS = 35;
@@ -60,6 +62,20 @@ interface ManualCompForm {
   expanded: boolean;
 }
 
+interface EditableCompForm {
+  included: boolean;
+  address: string;
+  salePrice: string;
+  sqft: string;
+  lotSizeSqft: string;
+  pricePerSqft: string;
+  beds: string;
+  baths: string;
+  saleDate: string;
+  category: CompCategory | "";
+  photos: string[];
+}
+
 interface Props {
   dealId: string;
   address: string;
@@ -68,6 +84,7 @@ interface Props {
   initialCheckedItems: { label: string; cost: number }[];
   initialInvestorProfitPct: number;
   initialAssignmentFee: number;
+  initialNotes: string;
   existingComps: NormalizedComp[];
 }
 
@@ -78,6 +95,22 @@ function buildInitialItems(checkedItems: { label: string; cost: number }[]): Ext
     const found = checkedItems.find((c) => c.label === item.label);
     return found ? { ...item, cost: found.cost, checked: true } : item;
   });
+}
+
+function buildEditableComps(comps: NormalizedComp[]): EditableCompForm[] {
+  return comps.map((c) => ({
+    included: true,
+    address: c.address,
+    salePrice: c.salePrice ? String(c.salePrice) : "",
+    sqft: c.sqft ? String(c.sqft) : "",
+    lotSizeSqft: c.lotSizeSqft ? String(c.lotSizeSqft) : "",
+    pricePerSqft: c.pricePerSqft ? String(c.pricePerSqft) : "",
+    beds: c.beds ? String(c.beds) : "",
+    baths: c.baths ? String(c.baths) : "",
+    saleDate: c.saleDate ?? "",
+    category: c.category ?? "",
+    photos: c.photos ?? [],
+  }));
 }
 
 function newCompForm(): ManualCompForm {
@@ -133,13 +166,14 @@ async function compressImage(file: File): Promise<UploadedPhoto> {
 
 export function RerunDealModal({
   dealId, address, initialCondition, initialMultiplier, initialCheckedItems,
-  initialInvestorProfitPct, initialAssignmentFee, existingComps,
+  initialInvestorProfitPct, initialAssignmentFee, initialNotes, existingComps,
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"settings" | "comps" | "photos">("settings");
 
   // Core inputs
-  const [notes, setNotes] = useState("");
+  const [notes, setNotes] = useState(initialNotes);
   const [condition, setCondition] = useState<ConditionGrade>(initialCondition);
   const [marketMultiplier, setMarketMultiplier] = useState(initialMultiplier);
   const [investorProfitPct, setInvestorProfitPct] = useState(Math.round(initialInvestorProfitPct * 100));
@@ -147,22 +181,27 @@ export function RerunDealModal({
   const [extraItems, setExtraItems] = useState<ExtraItem[]>(() => buildInitialItems(initialCheckedItems));
   const [propertyPhotos, setPropertyPhotos] = useState<UploadedPhoto[]>([]);
 
+  const [arvSqftOverride, setArvSqftOverride] = useState("");
+
   // Comp management
-  const [compIncluded, setCompIncluded] = useState<boolean[]>(() => existingComps.map(() => true));
+  const [editableComps, setEditableComps] = useState<EditableCompForm[]>(() => buildEditableComps(existingComps));
   const [manualComps, setManualComps] = useState<ManualCompForm[]>([]);
+
 
   const [state, setState] = useState<State>({ phase: "idle" });
 
   function reset() {
-    setNotes("");
+    setNotes(initialNotes);
     setCondition(initialCondition);
     setMarketMultiplier(initialMultiplier);
     setInvestorProfitPct(Math.round(initialInvestorProfitPct * 100));
     setAssignmentFee(initialAssignmentFee);
     setExtraItems(buildInitialItems(initialCheckedItems));
     setPropertyPhotos([]);
-    setCompIncluded(existingComps.map(() => true));
+    setArvSqftOverride("");
+    setEditableComps(buildEditableComps(existingComps));
     setManualComps([]);
+    setActiveTab("settings");
     setState({ phase: "idle" });
   }
 
@@ -188,8 +227,18 @@ export function RerunDealModal({
   }
 
   // Existing comps
-  function toggleComp(i: number) {
-    setCompIncluded((prev) => prev.map((v, idx) => idx === i ? !v : v));
+  function updateEditableComp(i: number, field: keyof EditableCompForm, value: string | boolean) {
+    setEditableComps((prev) => prev.map((c, idx) => {
+      if (idx !== i) return c;
+      const updated = { ...c, [field]: value };
+      // Auto-recalculate $/SF when price or sqft changes
+      if (field === "salePrice" || field === "sqft") {
+        const price = parseInt((field === "salePrice" ? value as string : updated.salePrice).replace(/[^0-9]/g, ""), 10);
+        const sqft  = parseInt((field === "sqft"       ? value as string : updated.sqft).replace(/[^0-9]/g, ""), 10);
+        if (price > 0 && sqft > 0) updated.pricePerSqft = String(Math.round(price / sqft));
+      }
+      return updated;
+    }));
   }
 
   // Manual comps
@@ -207,7 +256,26 @@ export function RerunDealModal({
     e.preventDefault();
     setState({ phase: "loading" });
 
-    const baseComps = existingComps.filter((_, i) => compIncluded[i]);
+    const baseComps: NormalizedComp[] = editableComps
+      .filter((c) => c.included)
+      .map((c) => {
+        const sqft       = parseInt(c.sqft.replace(/[^0-9]/g, ""), 10) || 0;
+        const salePrice  = parseInt(c.salePrice.replace(/[^0-9]/g, ""), 10) || 0;
+        const psf        = parseFloat(c.pricePerSqft) || (sqft > 0 ? Math.round(salePrice / sqft) : 0);
+        const lotSizeSqft = parseInt(c.lotSizeSqft.replace(/[^0-9]/g, ""), 10) || undefined;
+        return {
+          address:      c.address,
+          salePrice,
+          saleDate:     c.saleDate,
+          sqft,
+          lotSizeSqft,
+          pricePerSqft: psf,
+          beds:         parseFloat(c.beds) || 0,
+          baths:        parseFloat(c.baths) || 0,
+          photos:       c.photos,
+          category:     (c.category as CompCategory) || null,
+        };
+      });
 
     const manualCompsPayload: ManualComp[] = manualComps
       .filter((c) => c.address.trim())
@@ -240,6 +308,9 @@ export function RerunDealModal({
           baseComps,
           manualComps: manualCompsPayload.length > 0 ? manualCompsPayload : undefined,
           propertyPhotos: propertyPhotos.length > 0 ? propertyPhotos : undefined,
+          arvOverride: arvSqftOverride
+            ? { mode: "per_sqft" as const, value: parseFloat(arvSqftOverride) }
+            : undefined,
         }),
       });
 
@@ -257,7 +328,7 @@ export function RerunDealModal({
   }
 
   const disabled = state.phase === "loading";
-  const includedCount = compIncluded.filter(Boolean).length;
+  const includedCount = editableComps.filter((c) => c.included).length;
 
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) reset(); }}>
@@ -270,7 +341,7 @@ export function RerunDealModal({
 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-3xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
+        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-6xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
 
           {/* Header */}
           <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
@@ -307,9 +378,9 @@ export function RerunDealModal({
           {/* Form */}
           {(state.phase === "idle" || state.phase === "loading") && (
             <form onSubmit={handleSubmit} className="flex flex-col min-h-0">
-              <div className="overflow-y-auto px-6 pb-2 space-y-4">
 
-                {/* Address (locked) — full width */}
+              {/* Address + tabs — fixed, never scrolls */}
+              <div className="px-6 pt-2 pb-0 shrink-0 space-y-3">
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Property Address</label>
                   <input type="text" value={address} readOnly
@@ -317,154 +388,324 @@ export function RerunDealModal({
                   />
                 </div>
 
-                {/* 2-column main grid */}
-                <div className="grid grid-cols-2 gap-6">
-
-                  {/* ── Left: settings ── */}
-                  <div className="space-y-4">
-
-                    {/* Condition */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Property Condition</label>
-                      <select value={condition} onChange={(e) => setCondition(e.target.value as ConditionGrade)}
-                        disabled={disabled}
-                        className="w-full bg-surface border border-edge rounded-lg px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-brand transition-colors disabled:opacity-50 appearance-none"
+                {/* Tab bar */}
+                <div className="flex gap-1 border-b border-edge">
+                  {(["settings", "comps", "photos"] as const).map((tab) => {
+                    const labels: Record<string, string> = {
+                      settings: "Settings",
+                      comps: `Comps${editableComps.length > 0 ? ` (${includedCount}/${editableComps.length})` : ""}`,
+                      photos: `Photos${propertyPhotos.length > 0 ? ` (${propertyPhotos.length})` : ""}`,
+                    };
+                    return (
+                      <button key={tab} type="button" onClick={() => setActiveTab(tab)}
+                        className={`px-4 py-2 text-[12px] font-semibold transition-colors border-b-2 -mb-px ${
+                          activeTab === tab
+                            ? "text-white border-brand"
+                            : "text-muted border-transparent hover:text-white/70"
+                        }`}
                       >
-                        {CONDITION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                      </select>
-                    </div>
+                        {labels[tab]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-                    {/* Market Multiplier */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Market Multiplier</label>
-                        <span className="text-brand text-[13px] font-semibold tabular-nums">{marketMultiplier.toFixed(1)}×</span>
-                      </div>
-                      <input type="range" min={0.5} max={3.0} step={0.1} value={marketMultiplier}
-                        onChange={(e) => setMarketMultiplier(parseFloat(e.target.value))}
-                        disabled={disabled} className="w-full accent-brand disabled:opacity-50"
-                      />
-                      <div className="flex justify-between text-muted text-[10px]">
-                        <span>0.5× Low-cost</span><span>3.0× High-end</span>
-                      </div>
-                    </div>
+              {/* Tab content — scrollable */}
+              <div className="overflow-y-auto px-6 py-4 space-y-5 flex-1">
 
-                    {/* Investor Profit */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Investor Profit</label>
-                        <span className="text-brand text-[13px] font-semibold tabular-nums">{investorProfitPct}%</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input type="range" min={1} max={40} step={1} value={investorProfitPct}
-                          onChange={(e) => setInvestorProfitPct(parseInt(e.target.value, 10))}
-                          disabled={disabled} className="flex-1 accent-brand disabled:opacity-50"
-                        />
-                        <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden">
-                          <input type="number" min={1} max={40} value={investorProfitPct}
-                            onChange={(e) => setInvestorProfitPct(Math.max(1, Math.min(40, parseInt(e.target.value, 10) || 15)))}
-                            disabled={disabled}
-                            className="w-12 bg-transparent px-2 py-1.5 text-white text-[13px] text-right focus:outline-none disabled:opacity-50 tabular-nums"
-                          />
-                          <span className="text-muted text-[12px] pr-2">%</span>
-                        </div>
-                      </div>
-                      <p className="text-muted text-[10px]">% of net sales price (ARV × 0.92)</p>
-                    </div>
+                {/* ── Settings tab ────────────────────────────────────────── */}
+                {activeTab === "settings" && (<>
 
-                    {/* Assignment Fee */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Min. Assignment Fee</label>
-                        <span className="text-brand text-[13px] font-semibold tabular-nums">${assignmentFee.toLocaleString()}</span>
-                      </div>
-                      <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden focus-within:border-brand transition-colors">
-                        <span className="text-muted text-[13px] pl-3">$</span>
-                        <input type="text" value={assignmentFee.toLocaleString()}
-                          onChange={(e) => { const v = parseInt(e.target.value.replace(/[^0-9]/g, ""), 10); setAssignmentFee(isNaN(v) ? 0 : v); }}
-                          disabled={disabled}
-                          className="flex-1 bg-transparent px-2 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums"
-                        />
-                      </div>
-                      <p className="text-muted text-[10px]">Deducted from Max Offer (low &amp; high)</p>
-                    </div>
+                {/* Row 1: Condition + Market Multiplier */}
+                <div className="grid grid-cols-2 gap-4">
+
+                  {/* Condition */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Property Condition</label>
+                    <select value={condition} onChange={(e) => setCondition(e.target.value as ConditionGrade)}
+                      disabled={disabled}
+                      className="w-full bg-surface border border-edge rounded-lg px-3.5 py-2.5 text-white text-sm focus:outline-none focus:border-brand transition-colors disabled:opacity-50 appearance-none"
+                    >
+                      {CONDITION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
                   </div>
 
-                  {/* ── Right: repair items + notes ── */}
-                  <div className="space-y-4">
-
-                    {/* Extra Items */}
-                    <div className="space-y-2">
-                      <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Additional Repair Items</label>
-                      <div className="space-y-1.5">
-                        {extraItems.map((item, i) => (
-                          <div key={item.label} className="flex items-center gap-2.5">
-                            <input type="checkbox" id={`rerun-item-${i}`} checked={item.checked}
-                              onChange={() => toggleItem(i)} disabled={disabled}
-                              className="w-4 h-4 accent-brand shrink-0 disabled:opacity-50"
-                            />
-                            <label htmlFor={`rerun-item-${i}`} className={`flex-1 text-[13px] cursor-pointer select-none ${item.checked ? "text-white" : "text-muted"}`}>
-                              {item.label}
-                            </label>
-                            <div className="flex items-center">
-                              <span className="text-muted text-[12px] mr-1">$</span>
-                              <input type="text" value={item.cost.toLocaleString()}
-                                onChange={(e) => updateItemCost(i, e.target.value)}
-                                disabled={disabled || !item.checked}
-                                className="w-20 bg-surface border border-edge rounded px-2 py-1 text-white text-[12px] text-right focus:outline-none focus:border-brand transition-colors disabled:opacity-40 tabular-nums"
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                  {/* Market Multiplier */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Market Multiplier</label>
+                      <span className="text-brand text-[13px] font-semibold tabular-nums">{marketMultiplier.toFixed(1)}×</span>
                     </div>
-
-                    {/* Notes */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">
-                        Notes <span className="normal-case text-muted/60 tracking-normal font-normal">(optional)</span>
-                      </label>
-                      <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
-                        placeholder="Updated observations, new info from site visit..."
-                        rows={4} disabled={disabled}
-                        className="w-full bg-surface border border-edge rounded-lg px-3.5 py-2.5 text-white text-sm placeholder:text-muted focus:outline-none focus:border-brand transition-colors resize-none disabled:opacity-50"
-                      />
+                    <input type="range" min={0.5} max={3.0} step={0.1} value={marketMultiplier}
+                      onChange={(e) => setMarketMultiplier(parseFloat(e.target.value))}
+                      disabled={disabled} className="w-full accent-brand disabled:opacity-50"
+                    />
+                    <div className="flex justify-between text-muted text-[10px]">
+                      <span>0.5× Low-cost</span><span>3.0× High-end</span>
                     </div>
                   </div>
                 </div>
 
+                {/* Row 2: Investor Profit + Assignment Fee + ARV Override */}
+                <div className="grid grid-cols-3 gap-4">
+
+                  {/* Investor Profit */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Investor Profit</label>
+                    <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden focus-within:border-brand transition-colors">
+                      <input type="number" min={1} max={40} value={investorProfitPct}
+                        onChange={(e) => setInvestorProfitPct(Math.max(1, Math.min(40, parseInt(e.target.value, 10) || 20)))}
+                        disabled={disabled}
+                        className="flex-1 bg-transparent px-3.5 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums"
+                      />
+                      <span className="text-muted text-[13px] pr-3.5">%</span>
+                    </div>
+                    <p className="text-muted text-[10px]">% of net sales price (ARV × 0.92)</p>
+                  </div>
+
+                  {/* Assignment Fee */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Min. Assignment Fee</label>
+                    <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden focus-within:border-brand transition-colors">
+                      <span className="text-muted text-[13px] pl-3">$</span>
+                      <input type="text" value={assignmentFee.toLocaleString()}
+                        onChange={(e) => { const v = parseInt(e.target.value.replace(/[^0-9]/g, ""), 10); setAssignmentFee(isNaN(v) ? 0 : v); }}
+                        disabled={disabled}
+                        className="flex-1 bg-transparent px-2 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums"
+                      />
+                    </div>
+                    <p className="text-muted text-[10px]">Deducted from Max Offer (low &amp; high)</p>
+                  </div>
+
+                  {/* ARV $/sqft override */}
+                  <div className="space-y-1.5">
+                    <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">
+                      ARV $/sqft Override <span className="normal-case text-muted/60 tracking-normal font-normal">(optional)</span>
+                    </label>
+                    <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden focus-within:border-brand transition-colors">
+                      <input type="text" value={arvSqftOverride}
+                        onChange={(e) => setArvSqftOverride(e.target.value.replace(/[^0-9.]/g, ""))}
+                        placeholder="e.g. 170"
+                        disabled={disabled}
+                        className="flex-1 bg-transparent px-3.5 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums"
+                      />
+                      <span className="text-muted text-[13px] pr-3.5">$/sqft</span>
+                    </div>
+                    <p className="text-muted text-[10px]">Overrides comp-based ARV. Leave blank to use comps.</p>
+                  </div>
+                </div>
+
+                {/* Repair items — 2-col split */}
+                <div className="space-y-2">
+                  <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Additional Repair Items</label>
+                  {condition === "poor" && (
+                    <p className="text-[11px] text-amber-400/80 leading-snug">
+                      Poor condition already includes full gut costs (<strong className="text-amber-400">left column</strong>). Only check infrastructure items if applicable — they are always additive regardless of condition.
+                    </p>
+                  )}
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1.5">
+                  <div className="space-y-1.5">
+
+                    {/* Col 1: standard renovation items (0–3) */}
+                    {extraItems.slice(0, 4).map((item, i) => (
+                      <div key={item.label} className="flex items-center gap-2.5">
+                        <input type="checkbox" id={`rerun-item-${i}`} checked={item.checked}
+                          onChange={() => toggleItem(i)} disabled={disabled}
+                          className="w-4 h-4 accent-brand shrink-0 disabled:opacity-50"
+                        />
+                        <label htmlFor={`rerun-item-${i}`} className={`flex-1 text-[13px] cursor-pointer select-none ${item.checked ? "text-white" : "text-muted"}`}>
+                          {item.label}
+                        </label>
+                        <div className="flex items-center">
+                          <span className="text-muted text-[12px] mr-1">$</span>
+                          <input type="text" value={item.cost.toLocaleString()}
+                            onChange={(e) => updateItemCost(i, e.target.value)}
+                            disabled={disabled || !item.checked}
+                            className="w-20 bg-surface border border-edge rounded px-2 py-1 text-white text-[12px] text-right focus:outline-none focus:border-brand transition-colors disabled:opacity-40 tabular-nums"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Col 2: infrastructure items (4–7) */}
+                  <div className="space-y-1.5">
+                    {extraItems.slice(4).map((item, j) => {
+                      const i = j + 4;
+                      return (
+                        <div key={item.label} className="flex items-center gap-2.5">
+                          <input type="checkbox" id={`rerun-item-${i}`} checked={item.checked}
+                            onChange={() => toggleItem(i)} disabled={disabled}
+                            className="w-4 h-4 accent-brand shrink-0 disabled:opacity-50"
+                          />
+                          <label htmlFor={`rerun-item-${i}`} className={`flex-1 text-[13px] cursor-pointer select-none ${item.checked ? "text-white" : "text-muted"}`}>
+                            {item.label}
+                          </label>
+                          <div className="flex items-center">
+                            <span className="text-muted text-[12px] mr-1">$</span>
+                            <input type="text" value={item.cost.toLocaleString()}
+                              onChange={(e) => updateItemCost(i, e.target.value)}
+                              disabled={disabled || !item.checked}
+                              className="w-20 bg-surface border border-edge rounded px-2 py-1 text-white text-[12px] text-right focus:outline-none focus:border-brand transition-colors disabled:opacity-40 tabular-nums"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">
+                    Notes <span className="normal-case text-muted/60 tracking-normal font-normal">(optional)</span>
+                  </label>
+                  <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Updated observations, new info from site visit..."
+                    rows={3} disabled={disabled}
+                    className="w-full bg-surface border border-edge rounded-lg px-3.5 py-2.5 text-white text-sm placeholder:text-muted focus:outline-none focus:border-brand transition-colors resize-none disabled:opacity-50"
+                  />
+                </div>
+
+                </>)}
+
+                {/* ── Comps tab ────────────────────────────────────────────── */}
+                {activeTab === "comps" && (<>
+
                 {/* ── Existing Comps ──────────────────────────────────────── */}
-                {existingComps.length > 0 && (
+                {editableComps.length > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Comps from Previous Run</label>
-                      <span className="text-muted text-[11px]">{includedCount} / {existingComps.length} included</span>
+                      <span className="text-muted text-[11px]">{includedCount} / {editableComps.length} included</span>
                     </div>
-                    <div className="space-y-1.5">
-                      {existingComps.map((comp, i) => (
-                        <label
+                    <div className="space-y-2">
+                      {editableComps.map((comp, i) => (
+                        <div
                           key={i}
-                          className={`flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                            compIncluded[i]
-                              ? "bg-surface border-edge"
-                              : "bg-transparent border-edge/40 opacity-50"
+                          className={`rounded-lg border p-3 space-y-2 transition-colors ${
+                            comp.included ? "bg-surface border-edge" : "bg-transparent border-edge/40 opacity-50"
                           }`}
                         >
-                          <input
-                            type="checkbox"
-                            checked={compIncluded[i]}
-                            onChange={() => toggleComp(i)}
-                            disabled={disabled}
-                            className="w-4 h-4 accent-brand shrink-0 disabled:opacity-50"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-white text-[12px] truncate leading-snug">{comp.address}</p>
-                            <p className="text-muted text-[11px] mt-0.5">
-                              {comp.beds}bd / {comp.baths}ba · {comp.sqft?.toLocaleString()} sqft · {fmt(comp.salePrice)}
-                            </p>
+                          {/* Row 1: checkbox + address + category */}
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={comp.included}
+                              onChange={(e) => updateEditableComp(i, "included", e.target.checked)}
+                              disabled={disabled}
+                              className="w-4 h-4 accent-brand shrink-0 disabled:opacity-50"
+                            />
+                            <input
+                              type="text"
+                              value={comp.address}
+                              onChange={(e) => updateEditableComp(i, "address", e.target.value)}
+                              disabled={disabled || !comp.included}
+                              className="flex-1 bg-transparent border-b border-edge text-white text-[12px] placeholder:text-muted/50 focus:outline-none focus:border-brand pb-0.5 transition-colors disabled:opacity-50"
+                            />
+                            <select
+                              value={comp.category}
+                              onChange={(e) => updateEditableComp(i, "category", e.target.value)}
+                              disabled={disabled || !comp.included}
+                              className="bg-card border border-edge rounded px-2 py-1 text-white text-[11px] focus:outline-none focus:border-brand appearance-none disabled:opacity-50"
+                            >
+                              {COMP_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
                           </div>
-                          {catBadge(comp.category)}
-                        </label>
+
+                          {/* Row 2: editable fields */}
+                          <div className="grid grid-cols-8 gap-1.5 pl-6">
+                            {/* Sale Price */}
+                            <div className="col-span-2">
+                              <label className="text-[9px] text-muted uppercase tracking-wider">Sale Price</label>
+                              <div className="flex items-center bg-card border border-edge rounded overflow-hidden focus-within:border-brand transition-colors mt-0.5">
+                                <span className="text-muted text-[11px] pl-1.5">$</span>
+                                <input
+                                  type="text"
+                                  value={comp.salePrice}
+                                  onChange={(e) => updateEditableComp(i, "salePrice", e.target.value.replace(/[^0-9]/g, ""))}
+                                  disabled={disabled || !comp.included}
+                                  className="flex-1 bg-transparent px-1 py-1 text-white text-[11px] focus:outline-none disabled:opacity-50 tabular-nums"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Sqft */}
+                            <div>
+                              <label className="text-[9px] text-muted uppercase tracking-wider">Sqft</label>
+                              <input
+                                type="text"
+                                value={comp.sqft}
+                                onChange={(e) => updateEditableComp(i, "sqft", e.target.value.replace(/[^0-9]/g, ""))}
+                                disabled={disabled || !comp.included}
+                                className="mt-0.5 w-full bg-card border border-edge rounded px-1.5 py-1 text-white text-[11px] focus:outline-none focus:border-brand transition-colors disabled:opacity-50 tabular-nums"
+                              />
+                            </div>
+
+                            {/* $/SF — highlighted */}
+                            <div>
+                              <label className="text-[9px] text-brand uppercase tracking-wider font-semibold">$/SF</label>
+                              <input
+                                type="text"
+                                value={comp.pricePerSqft}
+                                onChange={(e) => updateEditableComp(i, "pricePerSqft", e.target.value.replace(/[^0-9]/g, ""))}
+                                disabled={disabled || !comp.included}
+                                className="mt-0.5 w-full bg-brand/5 border border-brand/40 rounded px-1.5 py-1 text-brand text-[11px] font-semibold focus:outline-none focus:border-brand transition-colors disabled:opacity-50 tabular-nums"
+                              />
+                            </div>
+
+                            {/* Beds */}
+                            <div>
+                              <label className="text-[9px] text-muted uppercase tracking-wider">Beds</label>
+                              <input
+                                type="text"
+                                value={comp.beds}
+                                onChange={(e) => updateEditableComp(i, "beds", e.target.value.replace(/[^0-9.]/g, ""))}
+                                disabled={disabled || !comp.included}
+                                className="mt-0.5 w-full bg-card border border-edge rounded px-1.5 py-1 text-white text-[11px] focus:outline-none focus:border-brand transition-colors disabled:opacity-50 tabular-nums"
+                              />
+                            </div>
+
+                            {/* Baths */}
+                            <div>
+                              <label className="text-[9px] text-muted uppercase tracking-wider">Baths</label>
+                              <input
+                                type="text"
+                                value={comp.baths}
+                                onChange={(e) => updateEditableComp(i, "baths", e.target.value.replace(/[^0-9.]/g, ""))}
+                                disabled={disabled || !comp.included}
+                                className="mt-0.5 w-full bg-card border border-edge rounded px-1.5 py-1 text-white text-[11px] focus:outline-none focus:border-brand transition-colors disabled:opacity-50 tabular-nums"
+                              />
+                            </div>
+
+                            {/* Lot Size */}
+                            <div>
+                              <label className="text-[9px] text-muted uppercase tracking-wider">Lot sqft</label>
+                              <input
+                                type="text"
+                                value={comp.lotSizeSqft}
+                                placeholder="—"
+                                onChange={(e) => updateEditableComp(i, "lotSizeSqft", e.target.value.replace(/[^0-9]/g, ""))}
+                                disabled={disabled || !comp.included}
+                                className="mt-0.5 w-full bg-card border border-edge rounded px-1.5 py-1 text-white text-[11px] focus:outline-none focus:border-brand transition-colors disabled:opacity-50 tabular-nums"
+                              />
+                            </div>
+
+                            {/* Last Sold Date */}
+                            <div>
+                              <label className="text-[9px] text-muted uppercase tracking-wider">Sold Date</label>
+                              <input
+                                type="date"
+                                value={comp.saleDate}
+                                onChange={(e) => updateEditableComp(i, "saleDate", e.target.value)}
+                                disabled={disabled || !comp.included}
+                                className="mt-0.5 w-full bg-card border border-edge rounded px-1.5 py-1 text-white text-[11px] focus:outline-none focus:border-brand transition-colors disabled:opacity-50"
+                              />
+                            </div>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -629,7 +870,10 @@ export function RerunDealModal({
                   </button>
                 </div>
 
-                {/* Property Photos */}
+                </>)}
+
+                {/* ── Photos tab ───────────────────────────────────────────── */}
+                {activeTab === "photos" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">
@@ -659,6 +903,7 @@ export function RerunDealModal({
                   )}
                   {propertyPhotos.length > 0 && <p className="text-muted/60 text-[11px]">These will be used instead of listing photos from Zillow.</p>}
                 </div>
+                )}
 
               </div>
 

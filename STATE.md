@@ -1,6 +1,6 @@
 # Deal UW — Session State
 
-Last updated: 2026-05-05
+Last updated: 2026-05-13
 
 ## What This Is
 
@@ -28,6 +28,7 @@ Pipeline runs 13 steps. Accepts optional `dealId` for re-runs (replaces existing
 
 1. Auth check
 2. Axesso: fetch subject property details (beds, baths, sqft, photos, zestimate, etc.)
+   - **Guard:** immediately throws `"Property not found"` if `zpid` or `address` is null — prevents pipeline from running on invalid/garbage addresses
 3. Axesso: fetch sold comps by zpid
 4. Normalize comps — **no hard fail if empty, continues with flags**
 5. Claude Call 1: Assess property condition from photos + grade → score (1–10), summary, line items
@@ -35,7 +36,7 @@ Pipeline runs 13 steps. Accepts optional `dealId` for re-runs (replaces existing
    - System prompt instructs Claude to prefer agent notes over public records data on any conflict
 6. Calculate repair costs (grade × sqft × market multiplier + extra items)
 7. Calculate ARV adjustments (pool +$30k, garage +$15k, premium construction +$17.5k, parking +$10k)
-8. Claude Call 2: Validate & categorize comps — **skipped if no comps**
+8. Claude Call 2: Validate & categorize comps into `arv`, `turnkey`, or `as_is` — **skipped if no comps**
 9. Calculate ARV:
    - Normal: avg $/sqft from arv-category comps × sqft + adjustment
    - Fallback 1: Zestimate used if no ARV comps exist (flag: `no_comps_arv_from_zestimate` or `no_arv_comps_arv_from_zestimate`)
@@ -63,6 +64,22 @@ Pipeline runs 13 steps. Accepts optional `dealId` for re-runs (replaces existing
 - Opens `RerunDealModal` — same form as New Deal, pre-filled with existing condition/multiplier/extra items, address locked
 - On submit: deletes old `underwriting_reports` row, resets deal to pending, reruns full pipeline against same `dealId`
 - On success: `router.refresh()` reloads the page with fresh data, URL unchanged
+- Comp type dropdown default label: "— Let AI decide —"
+
+**Existing comps panel (re-run only):**
+- Shows all comps from the previous run with their address, sale price, $/sqft, and category badge
+- User can deselect any comp to exclude it from the re-run
+- Selected comps are sent as `baseComps` — Axesso `searchSimilarSolds` is skipped entirely, categories reset to null so Claude re-evaluates them
+- If all comps are deselected, pipeline fetches fresh comps from Axesso
+
+**Manual comps (re-run only):**
+- User can add their own comps via "Add Comp" button
+- Each manual comp form: address (required), comp type dropdown (`arv`/`turnkey`/`as_is` or "Let AI decide"), sale price, sale date, beds, baths, sqft, lot size, year built, construction type
+- If `salePrice` + `sqft` are both provided → built directly from user data, no Axesso call
+- If either is missing → `resolveManualComp` calls `searchProperty(address)` on Axesso to fill in the gaps
+- If comp type is set by user → category is locked, bypasses Claude Call 2 categorization entirely
+- If comp type is blank → category is null, goes through Claude Call 2 like any other comp
+- Manual comps are merged with base comps before Claude Call 2
 
 ### User Photo Upload
 - Optional photo upload in both New Deal and Re-run modals (max 10 images)
@@ -80,7 +97,7 @@ Pipeline runs 13 steps. Accepts optional `dealId` for re-runs (replaces existing
 
 ### Components
 - `new-deal-modal.tsx` — Address, condition dropdown, market multiplier slider, extra repair items, photo upload, notes
-- `rerun-deal-modal.tsx` — Same form as above, address locked, pre-filled from existing report, passes `dealId`
+- `rerun-deal-modal.tsx` — Address locked, pre-filled from existing report; includes existing comps panel (toggle comps in/out), manual comp addition, photo upload; passes `dealId` + `baseComps` + `manualComps`
 - `deals-table.tsx` — Search, filter, bulk select + delete
 - `sidebar.tsx` — Nav (Dashboard, Deals, Analytics) — Settings removed
 - `topbar.tsx` — Page title, notifications (UI only), user avatar
@@ -96,6 +113,68 @@ Pipeline runs 13 steps. Accepts optional `dealId` for re-runs (replaces existing
 - Supabase PostgreSQL with RLS (Row Level Security) by user_id
 - `deals` table: id, user_id, address, status, recommendation, arv_low, arv_high, max_offer, error_message, created_at, updated_at
 - `underwriting_reports` table: full JSONB storage of property_data, comps, calculations, ai_assessment
+
+---
+
+### Comp Categories
+Three categories only: `arv`, `turnkey`, `as_is`. `cash_sale` was removed — from `CompCategory` type, Claude Call 2 prompt schema, Call 3 bundle, rerun modal dropdown, and both badge maps (modal + deal detail page).
+
+### UI & UX Updates (2026-05-13)
+
+**Notes pre-fill on re-run:** Notes from the original run are pre-filled in the re-run modal (`initialNotes` prop passed from `prop.notes` on deal detail page). User can edit, append, or clear before resubmitting.
+
+**Investor profit default:** Changed from 15% to 20% in New Deal modal. Fallback in deal detail page remains 0.15 (for old reports only).
+
+**Investor profit slider removed:** Both New Deal and Re-run modals — replaced with a plain number input + `%` suffix.
+
+**Condition dropdown pricing:** Labels now include per-sqft repair ranges, e.g. `Excellent (Fully Renovated / Turnkey) — $0–$15/sqft`.
+
+**Poor condition disclaimer:** A separator + amber warning appears between standard repair items (0–3) and infrastructure items (4+) when condition is set to Poor. Warns that the base rate already covers gut renovation costs. Appears in both modals.
+
+**New repair items:** Septic Tank Replacement ($15K) and Well Replacement ($10K) added to `DEFAULT_EXTRA_ITEMS` in both modals (indices 6–7, after foundation items). No calculation changes needed — `calcRepairCosts` sums all checked items generically.
+
+**Modal widths:** Both New Deal and Re-run modals expanded to `max-w-4xl`. Re-run further expanded to `max-w-6xl` to accommodate the editable comps table.
+
+### Editable Comps on Re-run (2026-05-13)
+
+All comp fields are now editable in the Re-run modal "Comps" tab:
+- **Fields:** address, category (dropdown), sale price, sqft, $/SF (brand-highlighted), beds, baths, lot size, sold date
+- **$/SF logic:** Editing $/SF directly sets it. Editing sale price or sqft auto-recalculates $/SF. Whichever the investor touches last wins.
+- **Category behavior:** User-set categories are respected (locked, bypass Claude Call 2). Blank ("Let AI decide") → null → Claude re-categorizes.
+- **Pipeline fix:** Step 3 no longer resets all categories to null on re-run — preserves user-set values.
+- **Submission:** Edited values in `editableComps` are serialized to `baseComps` including the investor's adjusted $/SF, which flows directly into `calcARV`.
+- Previously added manual comps appear in the editable comps panel on subsequent re-runs (they're saved as `validatedComps` in the report).
+
+**Lot size normalization:** `normalizeLotSize()` added to `lib/axesso.ts`. Axesso returns lot size in acres for some properties and sqft for others. Values < 100 are treated as acres and converted (× 43,560). Applied to both `searchProperty` and `searchSimilarSolds`. `lotSizeSqft?: number` added to `NormalizedComp`.
+
+### ARV $/sqft Override on Re-run (2026-05-13)
+
+Simple field in the Settings tab: investor types a $/sqft value (e.g. `170`) → pipeline uses `value × property.sqft + ARV adjustments` as ARV, bypassing comp-based calculation entirely. Leave blank to use comps as normal. Flags `arv_manual_per_sqft_override` pushed to Claude Call 3. State: `arvSqftOverride` string in re-run modal.
+
+### Claude Call 2 Rejection Criteria Update (2026-05-13)
+
+Rejection rules tightened: Claude now rejects a comp **only if** (1) property type doesn't match the subject, or (2) sale price is unrealistically far from the neighborhood range (e.g. $50K next to $300K comps). Distance, age of sale, and foreclosure/REO status are no longer rejection grounds.
+
+### Re-run Modal Layout Overhaul (2026-05-13)
+
+Re-run modal reorganized into **3 tabs** (Settings / Comps / Photos). Tab bar shows live counts (e.g. `Comps (2/3)`, `Photos (4)`). Resets to Settings tab on close.
+
+**Settings tab layout:**
+- Row 1 (`grid-cols-2`): Property Condition (full left half, text fully readable) | Market Multiplier slider (right)
+- Row 2 (`grid-cols-3`): Investor Profit | Min. Assignment Fee | ARV $/sqft Override
+- Below: Repair items in 2-col split (Standard Renovation left, Infrastructure right) + Notes
+
+**Comps tab:** Editable existing comps + Add Your Own Comps.
+
+**Photos tab:** Photo upload.
+
+### Resilience & Bug Fixes (2026-05-12)
+
+**Anthropic 529 overload retries:** `maxRetries: 5` on the Anthropic client (`lib/claude.ts`). Default was 2 — increased so transient overload errors retry with exponential backoff (~15s total window) before surfacing to the user.
+
+**Invalid address guard:** After Step 2 (Axesso), pipeline immediately throws `"Property not found — please enter a valid property address."` if `property.zpid` or `property.address` is null. Previously a junk address like "123" would return HTTP 200 with empty fields and the pipeline would run all the way through to Claude Call 3 before failing.
+
+**Failed deal row deduplication:** When submitting a new deal, Step 1 first checks for an existing `failed` row with the same `user_id + address`. If found, resets it to `pending` and reuses it instead of inserting a new row. Prevents accumulation of duplicate failed rows for the same address on repeated attempts.
 
 ---
 
