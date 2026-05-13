@@ -43,7 +43,7 @@ export interface PropertyDetails {
   beds: number;
   baths: number;
   sqft: number;
-  lotSizeSqft: number;
+  lotSizeSqft: number | undefined;
   yearBuilt: number;
   propertyType: string; // 'single-family' | 'condo' | 'multi-family' | etc.
   constructionMaterials: string[];
@@ -81,7 +81,7 @@ export interface SoldComp {
   beds: number;
   baths: number;
   sqft: number;
-  lotSizeSqft: number;
+  lotSizeSqft: number | undefined;
   pricePerSqft: number;
   distanceMiles: number;
   propertyType: string;
