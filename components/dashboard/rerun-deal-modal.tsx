@@ -341,7 +341,7 @@ export function RerunDealModal({
 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-6xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
+        <Dialog.Content onInteractOutside={(e) => e.preventDefault()} className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-6xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
 
           {/* Header */}
           <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
@@ -454,10 +454,11 @@ export function RerunDealModal({
                   <div className="space-y-1.5">
                     <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Investor Profit</label>
                     <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden focus-within:border-brand transition-colors">
-                      <input type="number" min={1} max={40} value={investorProfitPct}
-                        onChange={(e) => setInvestorProfitPct(Math.max(1, Math.min(40, parseInt(e.target.value, 10) || 20)))}
+                      <input type="number" min={1} max={99} value={investorProfitPct === 0 ? '' : investorProfitPct}
+                        onChange={(e) => { if (e.target.value === '') { setInvestorProfitPct(0); return; } const n = parseInt(e.target.value, 10); if (!isNaN(n)) setInvestorProfitPct(n); }}
+                        onBlur={() => setInvestorProfitPct(prev => Math.max(1, Math.min(99, prev || 20)))}
                         disabled={disabled}
-                        className="flex-1 bg-transparent px-3.5 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums"
+                        className="flex-1 bg-transparent px-3.5 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       />
                       <span className="text-muted text-[13px] pr-3.5">%</span>
                     </div>

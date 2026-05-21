@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, Loader2, CheckCircle2, AlertCircle, Upload } from "lucide-react";
@@ -31,6 +31,18 @@ const DEFAULT_EXTRA_ITEMS: ExtraItem[] = [
   { label: "Septic Tank Replacement",       cost: 15_000, checked: false },
   { label: "Well Replacement",              cost: 10_000, checked: false },
 ];
+
+const DRAFT_KEY = "new-deal-draft";
+
+type DraftData = {
+  address: string;
+  notes: string;
+  condition: ConditionGrade;
+  marketMultiplier: number;
+  investorProfitPct: number;
+  assignmentFee: number;
+  extraItems: ExtraItem[];
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -83,17 +95,52 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
   const [extraItems, setExtraItems] = useState<ExtraItem[]>(DEFAULT_EXTRA_ITEMS);
   const [propertyPhotos, setPropertyPhotos] = useState<UploadedPhoto[]>([]);
   const [state, setState] = useState<State>({ phase: "idle" });
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const dirty =
+      address.trim() !== "" ||
+      notes.trim() !== "" ||
+      condition !== "fair" ||
+      marketMultiplier !== 1.0 ||
+      investorProfitPct !== 20 ||
+      assignmentFee !== 22_500 ||
+      extraItems.some((item, i) => item.checked || item.cost !== DEFAULT_EXTRA_ITEMS[i].cost);
+    if (!dirty) { localStorage.removeItem(DRAFT_KEY); return; }
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ address, notes, condition, marketMultiplier, investorProfitPct, assignmentFee, extraItems }));
+  }, [open, address, notes, condition, marketMultiplier, investorProfitPct, assignmentFee, extraItems]);
+
+  function loadDraft(): boolean {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return false;
+      const d: DraftData = JSON.parse(raw);
+      setAddress(d.address ?? "");
+      setNotes(d.notes ?? "");
+      setCondition(d.condition ?? "fair");
+      setMarketMultiplier(d.marketMultiplier ?? 1.0);
+      setInvestorProfitPct(d.investorProfitPct ?? 20);
+      setAssignmentFee(d.assignmentFee ?? 22_500);
+      setExtraItems(d.extraItems ?? DEFAULT_EXTRA_ITEMS);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   function reset() {
+    localStorage.removeItem(DRAFT_KEY);
     setAddress("");
     setNotes("");
     setCondition("fair");
     setMarketMultiplier(1.0);
-    setInvestorProfitPct(15);
+    setInvestorProfitPct(20);
     setAssignmentFee(22_500);
     setExtraItems(DEFAULT_EXTRA_ITEMS);
     setPropertyPhotos([]);
     setState({ phase: "idle" });
+    setDraftRestored(false);
   }
 
   function toggleItem(i: number) {
@@ -146,6 +193,7 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
         return;
       }
 
+      localStorage.removeItem(DRAFT_KEY);
       setState({ phase: "success", dealId: data.dealId });
       router.push(`/dashboard/deals/${data.dealId}`);
     } catch {
@@ -156,12 +204,12 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
   const disabled = state.phase === "loading";
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => { setOpen(next); if (!next) reset(); }}>
+    <Dialog.Root open={open} onOpenChange={(next) => { setOpen(next); if (next) { const restored = loadDraft(); setDraftRestored(restored); } }}>
       <Dialog.Trigger asChild>{trigger}</Dialog.Trigger>
 
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40" />
-        <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-4xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
+        <Dialog.Content onInteractOutside={(e) => e.preventDefault()} className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-4xl bg-card border border-edge rounded-2xl shadow-2xl focus:outline-none flex flex-col max-h-[90vh]">
 
           {/* Header */}
           <div className="flex items-center justify-between px-6 pt-6 pb-4 shrink-0">
@@ -196,6 +244,16 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
           {(state.phase === "idle" || state.phase === "loading") && (
             <form onSubmit={handleSubmit} className="flex flex-col min-h-0">
               <div className="overflow-y-auto px-6 pb-2 space-y-4">
+
+                {/* Draft banner */}
+                {draftRestored && (
+                  <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 rounded-lg px-3.5 py-2">
+                    <span className="text-amber-400 text-[12px]">Draft restored</span>
+                    <button type="button" onClick={reset} className="text-amber-400/70 hover:text-amber-400 text-[11px] underline transition-colors">
+                      Start fresh
+                    </button>
+                  </div>
+                )}
 
                 {/* Address — full width */}
                 <div className="space-y-1.5">
@@ -243,10 +301,11 @@ export function NewDealModal({ trigger }: { trigger: React.ReactNode }) {
                     <div className="space-y-1.5">
                       <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">Investor Profit</label>
                       <div className="flex items-center bg-surface border border-edge rounded-lg overflow-hidden focus-within:border-brand transition-colors">
-                        <input type="number" min={1} max={40} value={investorProfitPct}
-                          onChange={(e) => setInvestorProfitPct(Math.max(1, Math.min(40, parseInt(e.target.value, 10) || 20)))}
+                        <input type="number" min={1} max={99} value={investorProfitPct === 0 ? '' : investorProfitPct}
+                          onChange={(e) => { if (e.target.value === '') { setInvestorProfitPct(0); return; } const n = parseInt(e.target.value, 10); if (!isNaN(n)) setInvestorProfitPct(n); }}
+                          onBlur={() => setInvestorProfitPct(prev => Math.max(1, Math.min(99, prev || 20)))}
                           disabled={disabled}
-                          className="flex-1 bg-transparent px-3.5 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums"
+                          className="flex-1 bg-transparent px-3.5 py-2.5 text-white text-sm focus:outline-none disabled:opacity-50 tabular-nums [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
                         <span className="text-muted text-[13px] pr-3.5">%</span>
                       </div>
